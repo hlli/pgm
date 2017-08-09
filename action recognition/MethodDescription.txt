@@ -1,0 +1,14 @@
+I used K-Means on the training set to get initialClassProb and initialPairProb.
+Specifically, what I did was:
+1. Combine posesData into a N by 30 matrix.
+2. From rows corresponding to the first poseData, randomly choose a row as initial mu_1;
+   From rows corresponding to the second poseData, randomly choose a row as initial mu_2;
+   From rows corresponding to the third poseData, randomly choose a row as initial mu_3;
+3. Run clustering until objective J converges
+
+Repeat the step 2-3, choose the one that gives the smallest J
+4. Get the corresponding class assignment;
+5. Compute new mean.
+6. Use this new mean as mean of multinomial normal, and calculate covariance.
+7. Calculate ClassProb.
+8. Calculate Pairprob.

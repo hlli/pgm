@@ -1,0 +1,243 @@
+% File: EM_HMM.m
+%
+% Copyright (C) Daphne Koller, Stanford Univerity, 2012
+
+function [P loglikelihood ClassProb PairProb] = EM_HMM(actionData, poseData, G, InitialClassProb, InitialPairProb, maxIter)
+
+% INPUTS
+% actionData: structure holding the actions as described in the PA
+% poseData: N x 10 x 3 matrix, where N is number of poses in all actions
+% G: graph parameterization as explained in PA description
+% InitialClassProb: N x K matrix, initial allocation of the N poses to the K
+%   states. InitialClassProb(i,j) is the probability that example i belongs
+%   to state j.
+%   This is described in more detail in the PA.
+% InitialPairProb: V x K^2 matrix, where V is the total number of pose
+%   transitions in all HMM action models, and K is the number of states.
+%   This is described in more detail in the PA.
+% maxIter: max number of iterations to run EM
+
+% OUTPUTS
+% P: structure holding the learned parameters as described in the PA
+% loglikelihood: #(iterations run) x 1 vector of loglikelihoods stored for
+%   each iteration
+% ClassProb: N x K matrix of the conditional class probability of the N examples to the
+%   K states in the final iteration. ClassProb(i,j) is the probability that
+%   example i belongs to state j. This is described in more detail in the PA.
+% PairProb: V x K^2 matrix, where V is the total number of pose transitions
+%   in all HMM action models, and K is the number of states. This is
+%   described in more detail in the PA.
+
+% Initialize variables
+N = size(poseData, 1);
+numParts = size(poseData, 2);
+
+K = size(InitialClassProb, 2);
+L = size(actionData, 2); % number of actions
+V = size(InitialPairProb, 1);
+
+ClassProb = InitialClassProb;
+PairProb = InitialPairProb;
+
+loglikelihood = zeros(maxIter,1);
+
+
+% EM algorithm
+for iter=1:maxIter
+  
+  % M-STEP to estimate parameters for Gaussians
+  % Fill in P.c, the initial state prior probability (NOT the class probability as in PA8 and EM_cluster.m)
+  % Fill in P.clg for each body part and each class
+  % Make sure to choose the right parameterization based on G(i,1)
+  % Hint: This part should be similar to your work from PA8 and
+  % EM_cluster.m
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % YOUR CODE HERE
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  P.c = zeros(1,K);
+  P.clg = repmat(struct('mu_y', [], 'sigma_y', [], 'mu_x', [], 'sigma_x', [], ...
+      'mu_angle', [], 'sigma_angle', [], 'theta', []), 1, numParts);
+  
+  priorRows = [];
+  for s = 1:L
+      priorRows = [priorRows, actionData(s).marg_ind(1)];
+  end
+  
+  for k = 1:K
+      W = ClassProb(:, k);
+      P.c(k) = sum(ClassProb(priorRows, k)) / length(priorRows);
+      for j = 1:numParts
+          if (G(j, 1) == 0)
+              [P.clg(j).mu_y(k), P.clg(j).sigma_y(k)] = FitG(poseData(:, j, 1), W);
+              [P.clg(j).mu_x(k), P.clg(j).sigma_x(k)] = FitG(poseData(:, j, 2), W);
+              [P.clg(j).mu_angle(k), P.clg(j).sigma_angle(k)] = FitG(poseData(:, j, 3), W);
+          else
+              pa = G(j, 2);
+              U = reshape(poseData(:, pa, :), N, 3);
+              
+              [Beta1, P.clg(j).sigma_y(k)] = FitLG(poseData(:, j, 1), U, W);
+              P.clg(j).theta(k, 1) = Beta1(4);
+              P.clg(j).theta(k, 2:4) = Beta1(1:3);
+              
+              [Beta2, P.clg(j).sigma_x(k)] = FitLG(poseData(:, j, 2), U, W);
+              P.clg(j).theta(k, 5) = Beta2(4);
+              P.clg(j).theta(k, 6:8) = Beta2(1:3);
+              
+              [Beta3, P.clg(j).sigma_angle(k)] = FitLG(poseData(:, j, 3), U, W);
+              P.clg(j).theta(k, 9) = Beta3(4);
+              P.clg(j).theta(k, 10:12) = Beta3(1:3);
+          end
+      end
+  end  
+  
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  % M-STEP to estimate parameters for transition matrix
+  % Fill in P.transMatrix, the transition matrix for states
+  % P.transMatrix(i,j) is the probability of transitioning from state i to state j
+  P.transMatrix = zeros(K,K);
+  
+  % Add Dirichlet prior based on size of poseData to avoid 0 probabilities
+  P.transMatrix = P.transMatrix + size(PairProb,1) * .05;
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % YOUR CODE HERE
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  for kRow = 1:K
+      idx = kRow + ((0:(K - 1)) * K);
+      for kCol = 1:K
+          P.transMatrix(kRow, kCol) = P.transMatrix(kRow, kCol) + sum(PairProb(:, idx(kCol)));
+      end
+      P.transMatrix(kRow, :) = P.transMatrix(kRow, :) / sum(P.transMatrix(kRow, :));
+  end
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+    
+  % E-STEP preparation: compute the emission model factors (emission probabilities) in log space for each 
+  % of the poses in all actions = log( P(Pose | State) )
+  % Hint: This part should be similar to (but NOT the same as) your code in EM_cluster.m
+  
+  logEmissionProb = zeros(N,K);
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % YOUR CODE HERE
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  for i = 1:N
+      for k = 1:K
+          for j = 1:numParts
+              y = poseData(i, j, 1);
+              x = poseData(i, j, 2);
+              angle = poseData(i, j, 3);
+              sigma_y = P.clg(j).sigma_y(k);
+              sigma_x = P.clg(j).sigma_x(k);
+              sigma_angle = P.clg(j).sigma_angle(k);
+              if (G(j, 1) == 0)
+                  mu_y = P.clg(j).mu_y(k);
+                  mu_x = P.clg(j).mu_x(k);
+                  mu_angle = P.clg(j).mu_angle(k);
+              else
+                  pa = G(j, 2);
+                  y_pa = poseData(i, pa, 1);
+                  x_pa = poseData(i, pa, 2);
+                  angle_pa = poseData(i, pa, 3);
+                  v = [1, y_pa, x_pa, angle_pa];
+                  mu_y = P.clg(j).theta(k, 1:4) * v';
+                  mu_x = P.clg(j).theta(k, 5:8) * v';
+                  mu_angle = P.clg(j).theta(k, 9:12) * v';
+              end
+              logEmissionProb(i, k) = logEmissionProb(i, k) + ...
+                  lognormpdf(y, mu_y, sigma_y) + ...
+                  lognormpdf(x, mu_x, sigma_x) + ...
+                  lognormpdf(angle, mu_angle, sigma_angle);
+          end
+      end
+  end
+              
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+    
+  % E-STEP to compute expected sufficient statistics
+  % ClassProb contains the conditional class probabilities for each pose in all actions
+  % PairProb contains the expected sufficient statistics for the transition CPDs (pairwise transition probabilities)
+  % Also compute log likelihood of dataset for this iteration
+  % You should do inference and compute everything in log space, only converting to probability space at the end
+  % Hint: You should use the logsumexp() function here to do probability normalization in log space to avoid numerical issues
+  
+  ClassProb = zeros(N,K);
+  PairProb = zeros(V,K^2);
+  loglikelihood(iter) = 0;
+  
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  % YOUR CODE HERE
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  for l = 1:L
+      rows = actionData(l).marg_ind;
+      numSingletons = length(rows);
+      pairRows = actionData(l).pair_ind;
+      numPairs = length(pairRows);
+      numFactors = 1 + numSingletons + numPairs;
+      F = repmat(struct('var', [], 'card', [], 'val', []), 1, numFactors);
+      
+      F(1).var = [1];
+      F(1).card = length(P.c);
+      F(1).val = log(P.c);
+      
+      for m = 1:numSingletons
+          F(m + 1).var = [ m ];
+          F(m + 1).card = size(logEmissionProb, 2);
+          F(m + 1).val = logEmissionProb(rows(m), :);
+      end
+      
+      for h = 1:numPairs
+          F(h + numSingletons + 1).var = [h, h + 1];
+          F(h + numSingletons + 1).card = size(P.transMatrix);
+          assignment = IndexToAssignment(1:prod(F(h + numSingletons + 1).card), F(h + numSingletons + 1).card);
+          for a = 1:size(assignment, 1)
+              F(h + numSingletons + 1).val(a) = log(P.transMatrix(assignment(a, 1), assignment(a, 2)));
+          end
+      end
+      
+      [M, PCalibrated] = ComputeExactMarginalsHMM(F);
+      
+      assert(length(M) == numSingletons, 'Number of M not equal to number of singleton factors');
+      for m = 1:numSingletons
+          ClassProb(rows(m), :) = exp(M(m).val - logsumexp(M(m).val));
+      end
+      
+      assert(length(PCalibrated.cliqueList) == numPairs, 'Number of PCalibrated not equal to number of pairs');
+      for h = 1:numPairs
+          PairProb(pairRows(h), :) = exp(PCalibrated.cliqueList(h).val - logsumexp(PCalibrated.cliqueList(h).val));
+      end
+      
+      loglikelihood(iter) = loglikelihood(iter) + logsumexp(PCalibrated.cliqueList(1).val);
+  end
+      
+
+  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  
+  % Print out loglikelihood
+  disp(sprintf('EM iteration %d: log likelihood: %f', ...
+    iter, loglikelihood(iter)));
+  if exist('OCTAVE_VERSION')
+    fflush(stdout);
+  end
+  
+  % Check for overfitting by decreasing loglikelihood
+  if iter > 1
+    if loglikelihood(iter) < loglikelihood(iter-1)
+      break;
+    end
+  end
+  
+end
+
+% Remove iterations if we exited early
+loglikelihood = loglikelihood(1:iter);
